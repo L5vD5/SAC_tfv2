@@ -1,24 +1,25 @@
-# Configuration, set model parameter
-class Config:
-    def __init__(self):
-        # Model
-        self.hdims = [32, 32]
-        #Graph
-        self.clip_ratio = 0.2
-        self.pi_lr = 3e-4
-        self.vf_lr = 1e-3
-        self.epsilon = 1e-8
-        #Buffer
-        self.gamma = 0.99
-        self.lam = 0.95
-        #Update
-        self.train_pi_iters = 100
-        self.train_v_iters = 100
-        self.target_kl = 0.01
-        self.epochs = 5000
-        self.max_ep_len = 1000
-        self.steps_per_epoch = 1000
-        #Worker
-        self.print_every = 10
-        self.evaluate_every = 50
-        self.update_every = 10
+buffer_size = 1e6
+
+LOG_STD_MIN = -10.0
+LOG_STD_MAX = +2.0
+
+alpha_pi = 0.1
+alpha_q = 0.0 #0.1
+
+lr = 1e-3
+gamma = 0.99
+polyak = 0.995
+epsilon = 1e-2
+
+hdims = [64,64]
+
+n_cpu = n_workers = 8
+total_steps = 5000
+evaluate_every = 200
+ep_len_rollout = 100
+batch_size = 128
+update_count = ep_len_rollout
+num_eval = 3
+max_ep_len_eval = 1e3
+buffer_size_long = 1e6
+buffer_size_short = 1e5

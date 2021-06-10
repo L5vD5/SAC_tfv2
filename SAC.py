@@ -3,41 +3,66 @@ import scipy.signal
 import numpy as np
 import tensorflow as tf
 import datetime,gym,os,pybullet_envs,time,psutil,ray
-from Replaybuffer import PPOBuffer
+from copy import deepcopy
+from Replaybuffer import SACBuffer
 from model import *
+import itertools
 import random
-from config import Config
+from config import *
 
 print ("Packaged loaded. TF version is [%s]."%(tf.__version__))
 
 class Agent(object):
-    def __init__(self):
-        # Config
-        self.config = Config()
-
+    def __init__(self, seed=1):
+        self.seed = seed
         # Environment
         self.env, self.eval_env = get_envs()
-        odim = self.env.observation_space.shape[0]
-        adim = self.env.action_space.shape[0]
+        odim, adim = self.env.observation_space.shape[0],self.env.action_space.shape[0]
+        self.odim = odim
+        self.adim = adim
 
         # Actor-critic model
-        ac_kwargs = dict()
-        ac_kwargs['action_space'] = self.env.action_space
-        self.actor_critic = ActorCritic(odim, adim, self.config.hdims,**ac_kwargs)
-        self.buf = PPOBuffer(odim=odim,adim=adim,size=self.config.steps_per_epoch,
-                             gamma=self.config.gamma,lam=self.config.lam)
+        self.model = MLPActorCritic(self.odim, self.adim, hdims)
+
+        # model load
+        # self.model.load_state_dict(tf.load('model_data/model_weights_[64,64]'))
+        print("weight load")
+
+        self.target = deepcopy(self.model)
+
+        # Freeze target networks with respect to optimizers
+        # (only update via polyak averaging)
+        for p in self.target.parameters():
+            p.requires_grad = False
+
+        # Initialize model
+        tf.random.set_seed(self.seed)
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
+        # parameter chain [q1 + q2]
+        self.q_vars = itertools.chain(self.model.q1.parameters(), self.model.q2.parameters())
+
+        replay_buffer_long = SACBuffer(odim=odim, adim=adim, size=int(buffer_size_long))
+        replay_buffer_short = SACBuffer(odim=odim, adim=adim, size=int(buffer_size_short))
 
         # Optimizers
-        self.train_pi = tf.keras.optimizers.Adam(learning_rate=self.config.pi_lr, epsilon=self.config.epsilon)
-        self.train_v = tf.keras.optimizers.Adam(learning_rate=self.config.vf_lr, epsilon=self.config.epsilon)
+        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr)
+        self.train_v = tf.keras.optimizers.Adam(learning_rate=lr)
+
+    def get_action(self, o, deterministic=False):
+        return self.model.get_action(tf.constant(o.reshape(1, -1)), deterministic)
+
+    # get weihts from model and target layer
+    def get_weights(self):
+        weight_vals = self.model.state_dict()
+        return weight_vals
+
+    def set_weights(self, weight_vals):
+        return self.model.load_state_dict(weight_vals)
 
     @tf.function
     def update_ppo(self, obs, act, adv, ret, logp):
-        # self.actor_critic.train()
-        # obs = tf.constant(obs)
-        # act = tf.constant(act)
-        # adv = tf.constant(adv)
-        # ret = tf.constant(ret)
         logp_a_old = logp
 
         for _ in tf.range(self.config.train_pi_iters):

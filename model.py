@@ -1,9 +1,11 @@
+import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 from gym.spaces import Box, Discrete
+from config import *
 
 ##### Model construction #####
-def mlp(odim=24, hdims=[256,256], actv='relu', output_actv=None):
+def mlp(odim=24, hdims=[64,64], actv='relu', output_actv=None):
     layers = tf.keras.Sequential()
     layers.add(tf.keras.layers.InputLayer(input_shape=(odim,)))
     for hdim in hdims[:-1]:
@@ -11,53 +13,99 @@ def mlp(odim=24, hdims=[256,256], actv='relu', output_actv=None):
     layers.add(tf.keras.layers.Dense(hdims[-1], activation=output_actv))
     return layers
 
-class CategoricalPolicy(tf.keras.Model):
+class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
     def __init__(self, odim, adim, hdims=[64,64], actv='relu', output_actv=None):
-        super(CategoricalPolicy, self).__init__()
-        self.net = mlp(odim, hdims=hdims, actv=actv, output_actv=output_actv)
-        self.logits = tf.keras.layers.Dense(adim)
-    def __call__(self, x, a=None):
-        output = self.net(x)
-        logits = self.logits(output)
-        prob = tf.nn.softmax(logits)
-        dist = tfp.distributions.Categorical(probs=prob)
-        pi = dist.sample()
-        logp_pi = dist.log_prob(pi)
-        logp = dist.log_prob(a)
-        return pi, logp, logp_pi, pi
+        super(MLPGaussianPolicy, self).__init__()
+        self.net = mlp(odim, hdims, actv, output_actv=actv) #feature
+        # mu layer
+        self.mu = tf.keras.layers.Dense(hdims[-1], bias=True)
+        # std layer
+        self.log_std = tf.keras.layers.Dense(hdims[-1], bias=True)
 
-class GaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
-    def __init__(self, odim, adim, hdims=[64,64], actv='relu', output_actv=None):
-        super(GaussianPolicy, self).__init__()
-        self.mu = mlp(odim, hdims=hdims+[adim], actv=actv, output_actv=output_actv)
-        self.log_std = tf.Variable(-0.5*tf.ones(adim))
     @tf.function
-    def call(self, x, a=None):
-        mu = self.mu(x)
-        std = tf.math.exp(self.log_std)
-        policy = tfp.distributions.Normal(mu, std)
-        pi = policy.sample()
-        # gaussian likelihood
-        logp_pi = tf.reduce_sum(policy.log_prob(pi), axis=1)
-        if a is not None:
-            logp = tf.reduce_sum(policy.log_prob(a), axis=1)
+    def call(self, o, deterministic=False, get_logprob=True):
+        net_ouput = self.net(o)
+        mu = self.mu(net_ouput)
+        log_std = self.log_std(net_ouput)
+
+        LOG_STD_MIN, LOG_STD_MAX = -10.0, +2.0
+        log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX) #log_std        # gaussian likelihood
+        std = tf.sigmoid(log_std)
+
+        # Pre-squash distribution and sample
+        dist = tfp.distributions.Normal(mu, std)
+        if deterministic:
+            pi = mu
         else:
-            logp = None
-        return pi, logp, logp_pi, mu        # 순서 ActorCritic return 값이랑 맞춤.
+            pi = dist.rsample()    # sampled
+
+        if get_logprob:
+            # Compute logprob from Gaussian, and then apply correction for Tanh squashing.
+            # NOTE: The correction formula is a little bit magic. To get an understanding
+            # of where it comes from, check out the original SAC paper (arXiv 1801.01290)
+            # and look in appendix C. This is a more numerically-stable equivalent to Eq 21.
+            # Try deriving it yourself as a (very difficult) exercise. :)
+            logp_pi = dist.log_prob(pi).sum(axis=-1)    #gaussian log_likelihood # modified axis
+            logp_pi -= tf.reduce_sum(2 * (np.log(2) - pi - tf.nn.softplus(-2 * pi)), axis=1)
+        else:
+            logp_pi = None
+        pi = tf.tanh(pi)
+        return pi, logp_pi
 
 
-class ActorCritic(tf.keras.Model):   # def mlp_actor_critic
+# Q-function mlp
+class MLPQFunction(tf.keras.Model):
+    def __init__(self,odim, adim, hdims=[64, 64], actv='relu'):
+        super().__init__()
+        self.q = mlp(odim=odim+adim, hdims=hdims+[1], actv=actv, output_actv=None)
+
+    @tf.function
+    def call(self, o, a):
+        x = tf.concat([o, a], -1)
+        q = self.q(x)
+        return tf.squeeze(q, -1)   #Critical to ensure q has right shape.
+
+
+class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
     def __init__(self, odim, adim, hdims=[64,64], actv='relu',
                  output_actv=None, policy=None, action_space=None):
-        super(ActorCritic,self).__init__()
-        if policy is None and isinstance(action_space, Box):
-            self.policy = GaussianPolicy(odim, adim, hdims, actv, output_actv)
-        elif policy is None and isinstance(action_space, Discrete):
-            self.policy = CategoricalPolicy(odim, adim, hdims, actv, output_actv)
-        self.vf_mlp = mlp(odim, hdims=hdims+[1],
-                          actv=actv, output_actv=output_actv)
+        super(MLPActorCritic,self).__init__()
+        self.policy = MLPGaussianPolicy(odim=odim, adim=adim, hdims=hdims, actv=actv)
+        self.q1 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)
+        self.q2 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)
+
     @tf.function
-    def call(self, x, a=None):
-        pi, logp, logp_pi, mu = self.policy(x, a)
-        v = self.vf_mlp(x)
-        return pi, logp, logp_pi, v, mu
+    def get_action(self, o, deterministic=False):
+        pi, _ = self.policy(o, deterministic, False)
+        return pi
+
+    @tf.function
+    def calc_pi_loss(self, data):
+        o = data['obs1']
+        pi, logp_pi = self.policy(o,)
+        q1_pi = self.q1(o,pi)
+        q2_pi = self.q2(o,pi)
+        min_q_pi = tf.minimum(q1_pi, q2_pi)
+        # pi losses
+        pi_loss = (alpha_pi*logp_pi - min_q_pi).mean()
+        return pi_loss
+
+    def calc_q_loss(self, target, data):
+        o, a, r, o2, d = data['obs1'], data['acts'], data['rews'], data['obs2'], data['done']
+
+        # Entropy-regularized Bellman backup
+            # get target action from current policy
+        pi_next, logp_pi_next = self.policy(o2)
+        # Target value
+        q1_targ = target.q1(o2, pi_next)
+        q2_targ = target.q2(o2, pi_next)
+        min_q_targ = tf.minimum(q1_targ, q2_targ)
+        # Entropy-regularized Bellman backup
+        q_backup = r + gamma*(1 - d)*(min_q_targ - alpha_q*logp_pi_next)
+        q1 = self.q1(o, a)
+        q2 = self.q2(o, a)
+        # value(q) loss
+        q1_loss = 0.5*tf.losses.mse(q1,q_backup)           #0.5 * ((q_backup-q1)**2).mean()
+        q2_loss = 0.5*tf.losses.mse(q2,q_backup)          #0.5 * ((q_backup-q2)**2).mean()
+        value_loss = q1_loss + q2_loss
+        return value_loss
