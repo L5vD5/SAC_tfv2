@@ -5,7 +5,7 @@ from gym.spaces import Box, Discrete
 from config import *
 
 ##### Model construction #####
-def mlp(odim=24, hdims=[64,64], actv='relu', output_actv=None):
+def mlp(odim=24, hdims=[64,64], actv='relu', output_actv='relu'):
     ki = tf.keras.initializers.truncated_normal(stddev=0.1)
     layers = tf.keras.Sequential()
     layers.add(tf.keras.layers.InputLayer(input_shape=(odim,)))
@@ -68,8 +68,7 @@ class MLPQFunction(tf.keras.Model):
 
 
 class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
-    def __init__(self, odim, adim, hdims=[64,64], actv='relu',
-                 output_actv=None, policy=None, action_space=None):
+    def __init__(self, odim, adim, hdims=[64,64], actv='relu'):
         super(MLPActorCritic,self).__init__()
         self.policy = MLPGaussianPolicy(odim=odim, adim=adim, hdims=hdims, actv=actv)
         self.q1 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)

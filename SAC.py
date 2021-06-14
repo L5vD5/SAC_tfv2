@@ -27,10 +27,13 @@ class Agent(object):
         self.model = MLPActorCritic(self.odim, self.adim, hdims)
         self.target = MLPActorCritic(self.odim, self.adim, hdims)
 
+        self.model.compile()
+        self.target.compile()
+
         [v_targ.assign(v_main) for v_main, v_targ in zip(self.model.trainable_variables, self.target.trainable_variables)]
         # model load
         # self.model.load_state_dict(tf.load('model_data/model_weights_[64,64]'))
-        print("weight load")
+        # print("weight load")
 
         # self.target = deepcopy(self.model)
 
@@ -69,26 +72,25 @@ class Agent(object):
             pi_loss = lambda: self.model.calc_pi_loss(data=replay_buffer)
             # grad = tape.gradient([pi_loss], self.model.policy.trainable_variables)
             # train_pi_op = self.train_pi.apply_gradients(zip(grad, self.model.policy.trainable_variables))
-            train_pi_op = self.train_pi.minimize(pi_loss, var_list=self.model.policy.trainable_variables)
+            self.train_pi.minimize(pi_loss, var_list=self.model.policy.trainable_variables)
 
-            with tf.control_dependencies([train_pi_op]):
-                var_loss = lambda: self.model.calc_q_loss(target=self.target, data=replay_buffer)
-                # with tf.GradientTape() as tape:
-                #     var_loss = self.model.calc_q_loss(target=self.target, data=replay_buffer)
-                # grad = tape.gradient([var_loss], self.model.q1.trainable_variables + self.model.q2.trainable_variables)
-                # train_q_op = self.train_q.apply_gradients(zip(grad, self.model.q1.trainable_variables + self.model.q2.trainable_variables))
-                train_q_op = self.train_q.minimize(var_loss, var_list=self.model.q1.trainable_variables + self.model.q2.trainable_variables)
+            var_loss = lambda: self.model.calc_q_loss(target=self.target, data=replay_buffer)
+            # with tf.GradientTape() as tape:
+            #     var_loss = self.model.calc_q_loss(target=self.target, data=replay_buffer)
+            # grad = tape.gradient([var_loss], self.model.q1.trainable_variables + self.model.q2.trainable_variables)
+            # train_q_op = self.train_q.apply_gradients(zip(grad, self.model.q1.trainable_variables + self.model.q2.trainable_variables))
+            self.train_q.minimize(var_loss, var_list=self.model.q1.trainable_variables + self.model.q2.trainable_variables)
 
-            with tf.control_dependencies([train_q_op]):
-                # Finally, update target networks by polyak averaging.
-                for v_main, v_targ in zip(self.model.q1.trainable_variables, self.target.q1.trainable_variables):
-                    v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
 
-                for v_main, v_targ in zip(self.model.q2.trainable_variables, self.target.q2.trainable_variables):
-                    v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
+            # Finally, update target networks by polyak averaging.
+            for v_main, v_targ in zip(self.model.q1.trainable_variables, self.target.q1.trainable_variables):
+                v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
 
-                for v_main, v_targ in zip(self.model.policy.trainable_variables, self.target.policy.trainable_variables):
-                    v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
+            for v_main, v_targ in zip(self.model.q2.trainable_variables, self.target.q2.trainable_variables):
+                v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
+
+            # for v_main, v_targ in zip(self.model.policy.trainable_variables, self.target.policy.trainable_variables):
+            #     v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
 
         # return pi_loss, var_loss
 
@@ -135,7 +137,7 @@ class Agent(object):
                     self.update_sac(replay_buffer)
 
             # Evaluate
-            if (epoch == 0) or (((epoch + 1) % evaluate_every) == 0) or (epoch == (total_steps - 1)):
+            if (((epoch + 1) % evaluate_every) == 0):
                 ram_percent = psutil.virtual_memory().percent  # memory usage
                 print("[Evaluate] step:[%d/%d][%.1f%%] #step:[%.1e] time:[%s] ram:[%.1f%%]." %
                       (epoch + 1, total_steps, epoch / total_steps * 100,
@@ -149,7 +151,7 @@ class Agent(object):
                     if RENDER_ON_EVAL:
                         _ = self.eval_env.render(mode='human')
                     while not (d or (ep_len == max_ep_len_eval)):
-                        a = self.get_action(o, deterministic=False)
+                        a = self.get_action(o, deterministic=True)
                         o, r, d, _ = self.eval_env.step(a.numpy()[0])
                         if RENDER_ON_EVAL:
                             _ = self.eval_env.render(mode='human')
