@@ -9,7 +9,7 @@ alpha_q = 0.1 #0.1
 lr = 1e-3
 gamma = 0.98
 polyak = 0.995
-epsilon = 1e-7
+epsilon = 1e-2
 
 hdims = [256,256]
 

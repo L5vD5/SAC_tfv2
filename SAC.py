@@ -46,8 +46,8 @@ class Agent(object):
         self.replay_buffer_short = SACBuffer(odim=odim, adim=adim, size=int(buffer_size_short))
 
         # Optimizers
-        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
-        self.train_q = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
+        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr)
+        self.train_q = tf.keras.optimizers.Adam(learning_rate=lr)
 
     def get_action(self, o, deterministic=False):
         return self.model.get_action(tf.constant(o.reshape(1, -1)), deterministic)
@@ -62,36 +62,36 @@ class Agent(object):
 
     @tf.function
     def update_sac(self, replay_buffer):
-        for _ in tf.range(int(update_count)):
-            # with tf.GradientTape() as tape:
-            #     pi_loss = self.model.calc_pi_loss(data=replay_buffer)
+        pi_loss, var_loss = 0., 0.
+        for _ in tf.range(update_count):
+            # pi_loss = lambda: self.model.calc_pi_loss(data=replay_buffer)
+            with tf.GradientTape() as tape:
+                pi_loss = self.model.calc_pi_loss(data=replay_buffer)
 
-            # gradients = tape.gradient(pi_loss, self.model.policy.trainable_variables)
-            # self.train_pi.apply_gradients(zip(gradients, self.model.policy.trainable_variables))
+            # grad = tape.gradient([pi_loss], self.model.policy.trainable_variables)
+            # train_pi_op = self.train_pi.apply_gradients(zip(grad, self.model.policy.trainable_variables))
+            train_pi_op = self.train_pi.minimize(pi_loss, var_list=self.model.policy.trainable_variables, tape=tape)
 
-            pi_loss = lambda: self.model.calc_pi_loss(data=replay_buffer)
-            self.train_pi.minimize(pi_loss, var_list=[self.model.policy.trainable_variables])
+            # var_loss = lambda: self.model.calc_q_loss(target=self.target, data=replay_buffer)
+            with tf.control_dependencies([train_pi_op]):
+                with tf.GradientTape() as tape:
+                    var_loss = self.model.calc_q_loss(target=self.target, data=replay_buffer)
+                # grad = tape.gradient([var_loss], self.model.q1.trainable_variables + self.model.q2.trainable_variables)
+                # train_q_op = self.train_q.apply_gradients(zip(grad, self.model.q1.trainable_variables + self.model.q2.trainable_variables))
+                train_q_op = self.train_q.minimize(var_loss, var_list=self.model.q1.trainable_variables + self.model.q2.trainable_variables, tape=tape)
 
-            # with tf.GradientTape() as tape:
-            #     var_loss = self.model.calc_q_loss(target=self.target, data=replay_buffer)
+            with tf.control_dependencies([train_q_op]):
+                # Finally, update target networks by polyak averaging.
+                for v_main, v_targ in zip(self.model.q1.trainable_variables, self.target.q1.trainable_variables):
+                    v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
 
-            # gradients = tape.gradient(var_loss, self.model.q1.trainable_variables)
-            # self.train_q.apply_gradients(zip(gradients, self.model.q1.trainable_variables))
+                for v_main, v_targ in zip(self.model.q2.trainable_variables, self.target.q2.trainable_variables):
+                    v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
 
-            var_loss = lambda: self.model.calc_q_loss(target=self.target, data=replay_buffer)
-            with tf.control_dependencies([self.train_pi]):
-                self.train_q.minimize(var_loss, var_list=[self.model.q1.trainable_variables, self.model.q2.trainable_variables])
+                for v_main, v_targ in zip(self.model.policy.trainable_variables, self.target.policy.trainable_variables):
+                    v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
 
-
-            # Finally, update target networks by polyak averaging.
-            for v_main, v_targ in zip(self.model.q1.trainable_variables, self.target.q1.trainable_variables):
-                v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
-
-            for v_main, v_targ in zip(self.model.q2.trainable_variables, self.target.q2.trainable_variables):
-                v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
-
-            for v_main, v_targ in zip(self.model.policy.trainable_variables, self.target.policy.trainable_variables):
-                v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
+        return pi_loss, var_loss
 
     def train(self):
         start_time = time.time()
@@ -133,7 +133,7 @@ class Agent(object):
                                          rews=tf.concat([batch['rews'], batch_short['rews']], 0),
                                          done=tf.concat([batch['done'], batch_short['done']], 0)
                                          )
-                    self.update_sac(replay_buffer)
+                    pi_loss, var_loss = self.update_sac(replay_buffer)
 
             # Evaluate
             if (epoch == 0) or (((epoch + 1) % evaluate_every) == 0) or (epoch == (total_steps - 1)):
