@@ -19,9 +19,9 @@ class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
         super(MLPGaussianPolicy, self).__init__()
         self.net = mlp(odim, hdims, actv, output_actv=actv) #feature
         # mu layer
-        self.mu = tf.keras.layers.Dense(adim, activation=None, trainable=True)
+        self.mu = tf.keras.layers.Dense(adim, activation=None)
         # std layer
-        self.log_std = tf.keras.layers.Dense(adim, activation=None, trainable=True)
+        self.log_std = tf.keras.layers.Dense(adim, activation=None)
 
     @tf.function
     def call(self, o, deterministic=False, get_logprob=True):

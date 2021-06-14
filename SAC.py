@@ -12,7 +12,7 @@ from config import *
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 print ("Packaged loaded. TF version is [%s]."%(tf.__version__))
 
-RENDER_ON_EVAL = True
+RENDER_ON_EVAL = False
 
 class Agent(object):
     def __init__(self, seed=1):
@@ -46,8 +46,8 @@ class Agent(object):
         self.replay_buffer_short = SACBuffer(odim=odim, adim=adim, size=int(buffer_size_short))
 
         # Optimizers
-        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr)
-        self.train_q = tf.keras.optimizers.Adam(learning_rate=lr)
+        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
+        self.train_q = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
 
     def get_action(self, o, deterministic=False):
         return self.model.get_action(tf.constant(o.reshape(1, -1)), deterministic)
