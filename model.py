@@ -46,13 +46,12 @@ class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
             # of where it comes from, check out the original SAC paper (arXiv 1801.01290)
             # and look in appendix C. This is a more numerically-stable equivalent to Eq 21.
             # Try deriving it yourself as a (very difficult) exercise. :)
-            logp_pi = tf.reduce_sum(dist.log_prob(pi), axis=-1)    #gaussian log_likelihood # modified axis
+            logp_pi = tf.reduce_sum(dist.log_prob(pi), axis=1)    #gaussian log_likelihood # modified axis
             logp_pi -= tf.reduce_sum(2 * (np.log(2) - pi - tf.nn.softplus(-2 * pi)), axis=1)
         else:
             logp_pi = None
         pi = tf.tanh(pi)
         return pi, logp_pi
-
 
 # Q-function mlp
 class MLPQFunction(tf.keras.Model):
@@ -73,42 +72,71 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
         self.policy = MLPGaussianPolicy(odim=odim, adim=adim, hdims=hdims, actv=actv)
         self.q1 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)
         self.q2 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)
+        # Optimizers
+        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
+        self.train_q1 = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
+        self.train_q2 = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
 
     @tf.function
-    def get_action(self, o, deterministic=False):
+    def call(self, o, deterministic=False):
         pi, _ = self.policy(o, deterministic, False)
         return pi
 
     @tf.function
-    def calc_pi_loss(self, data):
-        o = data['obs1']
-        pi, logp_pi = self.policy(o)
-        q1_pi = self.q1(o,pi)
-        q2_pi = self.q2(o,pi)
-        min_q_pi = tf.minimum(q1_pi, q2_pi)
-        # tf.print('logp_pi', logp_pi)
-        # pi losses
-        pi_loss = tf.reduce_mean(alpha_pi*logp_pi - min_q_pi)
+    def update_policy(self, data):
+        with tf.GradientTape() as tape:
+            o = data['obs1']
+            pi, logp_pi = self.policy(o)
+            q1_pi = self.q1(o,pi)
+            q2_pi = self.q2(o,pi)
+            min_q_pi = tf.minimum(q1_pi, q2_pi)
+            # tf.print('logp_pi', logp_pi)
+            # pi losses
+            pi_loss = tf.reduce_mean(alpha_pi*logp_pi - min_q_pi)
+        variables = self.policy.trainable_variables
+        grads = tape.gradient(pi_loss, variables)
+        self.train_pi.apply_gradients(zip(grads, variables))
+
         return pi_loss
 
     @tf.function
-    def calc_q_loss(self, target, data):
+    def update_Q(self, target, data):
         o, a, r, o2, d = data['obs1'], data['acts'], data['rews'], data['obs2'], data['done']
+        with tf.GradientTape() as tape1:
+            # Entropy-regularized Bellman backup
+            # get target action from current policy
+            pi_next, logp_pi_next = self.policy(o2)
+            # Target value
+            q1_targ = target.q1(o2, pi_next)
+            q2_targ = target.q2(o2, pi_next)
+            min_q_targ = tf.minimum(q1_targ, q2_targ)
+            # Entropy-regularized Bellman backup
+            q_backup = tf.stop_gradient(r + gamma*(1 - d)*(min_q_targ - alpha_q*logp_pi_next))
+            q1 = self.q1(o, a)
+            # value(q) loss
+            q1_loss = 0.5*tf.losses.mse(q1,q_backup)           #0.5 * ((q_backup-q1)**2).mean()
 
-        # Entropy-regularized Bellman backup
-        # get target action from current policy
-        pi_next, logp_pi_next = self.policy(o2)
-        # Target value
-        q1_targ = target.q1(o2, pi_next)
-        q2_targ = target.q2(o2, pi_next)
-        min_q_targ = tf.minimum(q1_targ, q2_targ)
-        # Entropy-regularized Bellman backup
-        q_backup = tf.stop_gradient(r + gamma*(1 - d)*(min_q_targ - alpha_q*logp_pi_next))
-        q1 = self.q1(o, a)
-        q2 = self.q2(o, a)
-        # tf.print('q1', q1, 'q2', q2)
-        # value(q) loss
-        q1_loss = 0.5*tf.losses.mse(q1,q_backup)           #0.5 * ((q_backup-q1)**2).mean()
-        q2_loss = 0.5*tf.losses.mse(q2,q_backup)          #0.5 * ((q_backup-q2)**2).mean()
+        with tf.GradientTape() as tape2:
+            # Entropy-regularized Bellman backup
+            # get target action from current policy
+            pi_next, logp_pi_next = self.policy(o2)
+            # Target value
+            q1_targ = target.q1(o2, pi_next)
+            q2_targ = target.q2(o2, pi_next)
+            min_q_targ = tf.minimum(q1_targ, q2_targ)
+            # Entropy-regularized Bellman backup
+            q_backup = tf.stop_gradient(r + gamma * (1 - d) * (min_q_targ - alpha_q * logp_pi_next))
+            q2 = self.q2(o, a)
+            # value(q) loss
+            q2_loss = 0.5*tf.losses.mse(q2,q_backup)          #0.5 * ((q_backup-q2)**2).mean()
+
+        grads1 = tape1.gradient(q1_loss, self.q1.trainable_variables)
+        self.train_q1.apply_gradients(zip(grads1,
+                                                   self.q1.trainable_variables))
+
+        grads2 = tape2.gradient(q2_loss, self.q2.trainable_variables)
+        self.train_q2.apply_gradients(zip(grads2,
+                                                   self.q2.trainable_variables))
+
         value_loss = q1_loss + q2_loss
         return value_loss
