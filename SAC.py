@@ -26,9 +26,9 @@ class Agent(object):
         # Actor-critic model
         self.model = MLPActorCritic(self.odim, self.adim, hdims)
         self.target = MLPActorCritic(self.odim, self.adim, hdims)
-
-        self.model.compile()
-        self.target.compile()
+        self.log_path = "./log/" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # self.model.compile()
+        # self.target.compile()
 
         [v_targ.assign(v_main) for v_main, v_targ in zip(self.model.trainable_variables, self.target.trainable_variables)]
         # model load
@@ -145,6 +145,8 @@ class Agent(object):
                        time.strftime("%H:%M:%S", time.gmtime(time.time() - start_time)),
                        ram_percent)
                       )
+                print("Saving weights...")
+                self.model.save_weights(self.log_path + "/weights/model_weight")
                 ep_ret_list = []  # for visualization
                 for eval_idx in range(num_eval):
                     o, d, ep_ret, ep_len = self.eval_env.reset(), False, 0, 0
