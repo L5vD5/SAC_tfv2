@@ -1,12 +1,10 @@
-buffer_size = 1e6
-
 LOG_STD_MIN = -10.0
 LOG_STD_MAX = +2.0
 
 alpha_pi = 0.1
 alpha_q = 0.1 #0.1
 
-lr = 1e-3
+lr = 3e-4
 gamma = 0.98
 polyak = 0.995
 epsilon = 1e-2

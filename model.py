@@ -5,7 +5,7 @@ from gym.spaces import Box, Discrete
 from config import *
 
 ##### Model construction #####
-def mlp(odim=24, hdims=[64,64], actv='relu', output_actv='relu'):
+def mlp(odim=24, hdims=hdims, actv='relu', output_actv='relu'):
     ki = tf.keras.initializers.truncated_normal(stddev=0.1)
     layers = tf.keras.Sequential()
     layers.add(tf.keras.layers.InputLayer(input_shape=(odim,)))
@@ -15,7 +15,7 @@ def mlp(odim=24, hdims=[64,64], actv='relu', output_actv='relu'):
     return layers
 
 class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
-    def __init__(self, odim, adim, hdims=[64,64], actv='relu'):
+    def __init__(self, odim, adim, hdims=hdims, actv='relu'):
         super(MLPGaussianPolicy, self).__init__()
         self.net = mlp(odim, hdims, actv, output_actv=actv) #feature
         # mu layer
@@ -24,7 +24,7 @@ class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
         self.log_std = tf.keras.layers.Dense(adim, activation=None)
 
     @tf.function
-    def call(self, o, deterministic=False, get_logprob=True):
+    def call(self, o, get_logprob=True):
         net_ouput = self.net(o)
         mu = self.mu(net_ouput)
         log_std = self.log_std(net_ouput)
@@ -35,10 +35,7 @@ class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
 
         # Pre-squash distribution and sample
         dist = tfp.distributions.Normal(mu, std)
-        if deterministic:
-            pi = mu
-        else:
-            pi = dist.sample()    # sampled
+        pi = dist.sample()    # sampled
 
         if get_logprob:
             # Compute logprob from Gaussian, and then apply correction for Tanh squashing.
@@ -46,16 +43,17 @@ class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
             # of where it comes from, check out the original SAC paper (arXiv 1801.01290)
             # and look in appendix C. This is a more numerically-stable equivalent to Eq 21.
             # Try deriving it yourself as a (very difficult) exercise. :)
-            logp_pi = tf.reduce_sum(dist.log_prob(pi), axis=1)    #gaussian log_likelihood # modified axis
+            logp_pi = tf.reduce_sum(dist.log_prob(pi), axis=1) #gaussian log_likelihood # modified axis
             logp_pi -= tf.reduce_sum(2 * (np.log(2) - pi - tf.nn.softplus(-2 * pi)), axis=1)
         else:
             logp_pi = None
-        pi = tf.tanh(pi)
-        return pi, logp_pi
+        mu, pi = tf.tanh(mu), tf.tanh(pi)
+        return mu, pi, logp_pi
+
 
 # Q-function mlp
 class MLPQFunction(tf.keras.Model):
-    def __init__(self, odim, adim, hdims=[64, 64], actv='relu'):
+    def __init__(self, odim, adim, hdims=hdims, actv='relu'):
         super().__init__()
         self.q = mlp(odim+adim, hdims=hdims+[1], actv=actv, output_actv=None)
 
@@ -65,9 +63,8 @@ class MLPQFunction(tf.keras.Model):
         q = self.q(x)
         return tf.squeeze(q, axis=1)   #Critical to ensure q has right shape.
 
-
 class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
-    def __init__(self, odim, adim, hdims=[64,64], actv='relu'):
+    def __init__(self, odim, adim, hdims=hdims, actv='relu'):
         super(MLPActorCritic,self).__init__()
         self.policy = MLPGaussianPolicy(odim=odim, adim=adim, hdims=hdims, actv=actv)
         self.q1 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)
@@ -79,64 +76,58 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
 
     @tf.function
     def call(self, o, deterministic=False):
-        pi, _ = self.policy(o, deterministic, False)
-        return pi
+        mu, pi, _ = self.policy(o, False)
+        if deterministic:
+            return mu
+        else:
+            return pi
 
     @tf.function
     def update_policy(self, data):
+        o = data['obs1']
+
         with tf.GradientTape() as tape:
-            o = data['obs1']
-            pi, logp_pi = self.policy(o)
-            q1_pi = self.q1(o,pi)
-            q2_pi = self.q2(o,pi)
-            min_q_pi = tf.minimum(q1_pi, q2_pi)
-            # tf.print('logp_pi', logp_pi)
             # pi losses
+            _, pi, logp_pi = self.policy(o)
+            q1_pi = self.q1(o, pi)
+            q2_pi = self.q2(o, pi)
+            min_q_pi = tf.minimum(q1_pi, q2_pi)
             pi_loss = tf.reduce_mean(alpha_pi*logp_pi - min_q_pi)
         variables = self.policy.trainable_variables
-        grads = tape.gradient(pi_loss, variables)
-        self.train_pi.apply_gradients(zip(grads, variables))
-
-        return pi_loss
+        # grads = tape.gradient(pi_loss, variables)
+        # self.train_pi.apply_gradients(zip(grads, variables))
+        self.train_pi.minimize(pi_loss, variables, tape=tape)
+        # tf.print('pi_loss', pi_loss)
+        return pi_loss, logp_pi, min_q_pi
 
     @tf.function
     def update_Q(self, target, data):
         o, a, r, o2, d = data['obs1'], data['acts'], data['rews'], data['obs2'], data['done']
-        with tf.GradientTape() as tape1:
-            # Entropy-regularized Bellman backup
-            # get target action from current policy
-            pi_next, logp_pi_next = self.policy(o2)
-            # Target value
-            q1_targ = target.q1(o2, pi_next)
-            q2_targ = target.q2(o2, pi_next)
-            min_q_targ = tf.minimum(q1_targ, q2_targ)
-            # Entropy-regularized Bellman backup
-            q_backup = tf.stop_gradient(r + gamma*(1 - d)*(min_q_targ - alpha_q*logp_pi_next))
-            q1 = self.q1(o, a)
-            # value(q) loss
-            q1_loss = 0.5*tf.losses.mse(q1,q_backup)           #0.5 * ((q_backup-q1)**2).mean()
+        # get target action from current policy
+        _, pi_next, logp_pi_next = self.policy(o2)
+        # Target value
+        q1_targ = target.q1(o2, pi_next)
+        q2_targ = target.q2(o2, pi_next)
+        min_q_targ = tf.minimum(q1_targ, q2_targ)
+        # Entropy-regularized Bellman backup
+        q_backup = tf.stop_gradient(r + gamma * (1 - d) * (min_q_targ - alpha_q * logp_pi_next))
 
-        with tf.GradientTape() as tape2:
-            # Entropy-regularized Bellman backup
-            # get target action from current policy
-            pi_next, logp_pi_next = self.policy(o2)
-            # Target value
-            q1_targ = target.q1(o2, pi_next)
-            q2_targ = target.q2(o2, pi_next)
-            min_q_targ = tf.minimum(q1_targ, q2_targ)
-            # Entropy-regularized Bellman backup
-            q_backup = tf.stop_gradient(r + gamma * (1 - d) * (min_q_targ - alpha_q * logp_pi_next))
+        with tf.GradientTape() as tape:
+            q1 = self.q1(o, a)
             q2 = self.q2(o, a)
             # value(q) loss
-            q2_loss = 0.5*tf.losses.mse(q2,q_backup)          #0.5 * ((q_backup-q2)**2).mean()
+            q1_loss = 0.5*tf.losses.mse(q1,q_backup)
+            q2_loss = 0.5*tf.losses.mse(q2,q_backup)
+            value_loss = q1_loss + q2_loss
 
-        grads1 = tape1.gradient(q1_loss, self.q1.trainable_variables)
-        self.train_q1.apply_gradients(zip(grads1,
-                                                   self.q1.trainable_variables))
+        # grads1 = tape.gradient(q1_loss, self.q1.trainable_variables)
+        # self.train_q1.apply_gradients(zip(grads1, self.q1.trainable_variables))
 
-        grads2 = tape2.gradient(q2_loss, self.q2.trainable_variables)
-        self.train_q2.apply_gradients(zip(grads2,
-                                                   self.q2.trainable_variables))
+        self.train_q1.minimize(value_loss, self.q1.trainable_variables+self.q2.trainable_variables, tape=tape)
 
-        value_loss = q1_loss + q2_loss
-        return value_loss
+        # grads2 = tape.gradient(q2_loss, self.q2.trainable_variables)
+        # self.train_q2.apply_gradients(zip(grads2, self.q2.trainable_variables))
+        # tf.print('q1', q1)
+        # tf.print('q2', q2)
+        # tf.print('value_loss', value_loss)
+        return value_loss, q1, q2, logp_pi_next, q_backup, q1_targ, q2_targ
