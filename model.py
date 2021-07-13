@@ -14,6 +14,14 @@ def mlp(odim=24, hdims=hdims, actv='relu', output_actv='relu'):
     layers.add(tf.keras.layers.Dense(hdims[-1], activation=output_actv, kernel_initializer=ki))
     return layers
 
+def gaussian_loglik(x,mu,log_std):
+        EPS = 1e-8
+        pre_sum = -0.5*(
+            ( (x-mu)/(tf.exp(log_std)+EPS) )**2 +
+            2*log_std + np.log(2*np.pi)
+        )
+        return tf.reduce_sum(pre_sum, axis=1)
+
 class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
     def __init__(self, odim, adim, hdims=hdims, actv='relu'):
         super(MLPGaussianPolicy, self).__init__()
@@ -43,7 +51,8 @@ class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
             # of where it comes from, check out the original SAC paper (arXiv 1801.01290)
             # and look in appendix C. This is a more numerically-stable equivalent to Eq 21.
             # Try deriving it yourself as a (very difficult) exercise. :)
-            logp_pi = tf.reduce_sum(dist.log_prob(pi), axis=1) #gaussian log_likelihood # modified axis
+            # logp_pi = tf.reduce_sum(dist.log_prob(pi), axis=1) #gaussian log_likelihood # modified axis
+            logp_pi = gaussian_loglik(x=pi, mu=mu, log_std=log_std)
             logp_pi -= tf.reduce_sum(2 * (np.log(2) - pi - tf.nn.softplus(-2 * pi)), axis=1)
         else:
             logp_pi = None
@@ -131,3 +140,36 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
         # tf.print('q2', q2)
         # tf.print('value_loss', value_loss)
         return value_loss, q1, q2, logp_pi_next, q_backup, q1_targ, q2_targ
+
+    @tf.function
+    def update_draft(self, target, data):
+        o, a, r, o2, d = data['obs1'], data['acts'], data['rews'], data['obs2'], data['done']
+        # get target action from current policy
+        _, pi_next, logp_pi_next = self.policy(o2)
+        # Target value
+        q1_targ = target.q1(o2, pi_next)
+        q2_targ = target.q2(o2, pi_next)
+        min_q_targ = tf.minimum(q1_targ, q2_targ)
+        # Entropy-regularized Bellman backup
+        q_backup = tf.stop_gradient(r + gamma * (1 - d) * (min_q_targ - alpha_q * logp_pi_next))
+
+        with tf.GradientTape(persistent=True) as tape:
+            _, pi, logp_pi = self.policy(o)
+            q1 = self.q1(o, a)
+            q2 = self.q2(o, a)
+            # value(q) loss
+            q1_pi = tf.stop_gradient(self.q1(o, pi))
+            q2_pi = tf.stop_gradient(self.q2(o, pi))
+            min_q_pi = tf.minimum(q1_pi, q2_pi)
+            pi_loss = tf.reduce_mean(alpha_pi*logp_pi - min_q_pi)
+            q1_loss = 0.5*tf.losses.mse(q1,q_backup)
+            q2_loss = 0.5*tf.losses.mse(q2,q_backup)
+            value_loss = q1_loss + q2_loss
+            loss = value_loss + pi_loss
+
+        # self.train_pi.minimize(pi_loss, self.policy.trainable_variables, tape=tape)
+        # self.train_q1.minimize(value_loss, self.q1.trainable_variables+self.q2.trainable_variables, tape=tape)
+        grads = tape.gradient(loss, self.trainable_variables)
+        self.train_pi.apply_gradients(zip(grads, self.trainable_variables))
+
+        return pi_loss, value_loss, q1, q2
