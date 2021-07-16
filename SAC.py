@@ -88,12 +88,12 @@ class Agent(object):
             # self.train_q.minimize(var_loss, var_list=self.model.q1.trainable_variables + self.model.q2.trainable_variables)
             # pi_loss, logp_pi, min_q_pi = self.model.update_policy(replay_buffer)
             # value_loss, q1, q2, logp_pi_next, q_backup, q1_targ, q2_targ = self.model.update_Q(self.target, replay_buffer)
-            pi_loss, value_loss, q1, q2 = self.model.update_draft(self.target, replay_buffer)
+            pi_loss, q1_loss, q2_loss, value_loss = self.model.update_draft(self.target, replay_buffer)
 
             self.pi_loss_metric.update_state(pi_loss)
             self.value_loss_metric.update_state(value_loss)
-            self.q1_metric.update_state(q1)
-            self.q2_metric.update_state(q2)
+            self.q1_metric.update_state(q1_loss)
+            self.q2_metric.update_state(q2_loss)
             # Finally, update target networks by polyak averaging.
             for v_main, v_targ in zip(self.model.q1.trainable_variables, self.target.q1.trainable_variables):
                 v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
@@ -230,5 +230,5 @@ def get_envs():
     return env,eval_env
 
 a = Agent()
-# a.train()
-a.play('./log/success/last/')
+a.train()
+# a.play('./log/success/last/')

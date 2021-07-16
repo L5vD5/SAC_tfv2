@@ -173,3 +173,38 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
         self.train_pi.apply_gradients(zip(grads, self.trainable_variables))
 
         return pi_loss, value_loss, q1, q2
+
+    @tf.function
+    def update_draft(self, target, data):
+        o, a, r, o2, d = data['obs1'], data['acts'], data['rews'], data['obs2'], data['done']
+        # get target action from current policy
+        _, pi_next, logp_pi_next = self.policy(o2)
+        # Target value
+        q1_targ = target.q1(o2, pi_next)
+        q2_targ = target.q2(o2, pi_next)
+        min_q_targ = tf.minimum(q1_targ, q2_targ)
+        # Entropy-regularized Bellman backup
+        q_backup = tf.stop_gradient(r + gamma * (1 - d) * (min_q_targ - alpha_q * logp_pi_next))
+
+        with tf.GradientTape() as tape:
+            q1 = self.q1(o, a)
+            q2 = self.q2(o, a)
+            # value(q) loss
+            q1_loss = 0.5 * tf.losses.mse(q1, q_backup)
+            q2_loss = 0.5 * tf.losses.mse(q2, q_backup)
+            value_loss = q1_loss + q2_loss
+            with tf.GradientTape() as tape_:
+                # pi losses
+                _, pi, logp_pi = self.policy(o)
+                q1_pi = self.q1(o, pi)
+                q2_pi = self.q2(o, pi)
+                min_q_pi = tf.minimum(q1_pi, q2_pi)
+                pi_loss = tf.reduce_mean(alpha_pi * logp_pi - min_q_pi)
+
+        variables = self.policy.trainable_variables
+        # grads = tape.gradient(pi_loss, variables)
+        # self.train_pi.apply_gradients(zip(grads, variables))
+        self.train_pi.minimize(pi_loss, variables, tape=tape_)
+        self.train_q1.minimize(value_loss, self.q1.trainable_variables+self.q2.trainable_variables, tape=tape)
+        # tf.print('pi_loss', pi_loss)
+        return pi_loss, q1_loss, q2_loss, value_loss
