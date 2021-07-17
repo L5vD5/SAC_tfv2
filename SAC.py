@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import datetime,gym,os,pybullet_envs,time,psutil,ray
-import itertools
+from copy import deepcopy
 from Replaybuffer import SACBuffer
 from model import *
 import random
@@ -25,6 +25,8 @@ class Agent(object):
         # Actor-critic model
         self.model = MLPActorCritic(self.odim, self.adim, hdims)
         self.target = MLPActorCritic(self.odim, self.adim, hdims)
+
+        self.target.set_weights(self.model.get_weights())
 
         # self.model.compile()
         # self.target.compile()
@@ -86,9 +88,9 @@ class Agent(object):
             # grad = tape.gradient([var_loss], self.model.q1.trainable_variables + self.model.q2.trainable_variables)
             # train_q_op = self.train_q.apply_gradients(zip(grad, self.model.q1.trainable_variables + self.model.q2.trainable_variables))
             # self.train_q.minimize(var_loss, var_list=self.model.q1.trainable_variables + self.model.q2.trainable_variables)
-            # pi_loss, logp_pi, min_q_pi = self.model.update_policy(replay_buffer)
-            # value_loss, q1, q2, logp_pi_next, q_backup, q1_targ, q2_targ = self.model.update_Q(self.target, replay_buffer)
-            pi_loss, value_loss, q1, q2 = self.model.update_draft(self.target, replay_buffer)
+            pi_loss, logp_pi, min_q_pi = self.model.update_policy(replay_buffer)
+            value_loss, q1, q2, logp_pi_next, q_backup, q1_targ, q2_targ = self.model.update_Q(self.target, replay_buffer)
+            # pi_loss, value_loss, q1, q2 = self.model.update_draft(self.target, replay_buffer)
 
             self.pi_loss_metric.update_state(pi_loss)
             self.value_loss_metric.update_state(value_loss)
@@ -230,5 +232,5 @@ def get_envs():
     return env,eval_env
 
 a = Agent()
-# a.train()
-a.play('./log/success/last/')
+a.train()
+# a.play('./log/success/last/')
