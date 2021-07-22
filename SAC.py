@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-import datetime,gym,os,pybullet_envs,time,psutil,ray
+import datetime,gym,os,pybullet_envs,time,psutil
 import itertools
 from Replaybuffer import SACBuffer
 from model import *
@@ -26,14 +26,11 @@ class Agent(object):
         self.model = MLPActorCritic(self.odim, self.adim, hdims)
         self.target = MLPActorCritic(self.odim, self.adim, hdims)
 
-        # self.model.compile()
-        # self.target.compile()
-
         # model load
         # self.model.load_state_dict(tf.load('model_data/model_weights_[64,64]'))
         # print("weight load")
 
-        # self.target = deepcopy(self.model)
+        self.target.set_weights(self.model.get_weights())
 
         # Initialize model
         tf.random.set_seed(self.seed)
@@ -47,8 +44,8 @@ class Agent(object):
         self.replay_buffer_short = SACBuffer(odim=odim, adim=adim, size=int(buffer_size_short))
 
         # Optimizers
-        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
-        self.train_q = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
+        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr)
+        self.train_q = tf.keras.optimizers.Adam(learning_rate=lr)
 
         self.pi_loss_metric = tf.keras.metrics.Mean(name="pi_loss")
         self.value_loss_metric = tf.keras.metrics.Mean(name="Q_loss")
@@ -229,6 +226,8 @@ def get_envs():
         time.sleep(0.01)
     return env,eval_env
 
-a = Agent()
-a.train()
+if __name__ == "__main__":
+    a = Agent()
+    a.train()
+
 # a.play('./log/success/last/')
