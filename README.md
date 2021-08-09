@@ -37,17 +37,19 @@ hdims       # dimension of hidden layers
 # ray
 n_cpu = n_workers # TODO  cpu num
 
-# learning config
+# Update
 batch_size
 update_count
+start_steps
+ep_len_rollout
+total_steps
+
+# Evaluate
+max_ep_len_eval
+num_eval
+evaluate_every
+
+# Buffer
 buffer_size_long
 buffer_size_short
-start_steps
-
-# for loop config
-total_steps
-evaluate_every
-ep_len_rollout
-num_eval
-max_ep_len_eval
 ```
