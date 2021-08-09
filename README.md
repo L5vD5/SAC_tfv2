@@ -1,6 +1,6 @@
 # SAC_tfv2
 
-# Requirements
+## Requirements
 
 - pybullet
 - tensorflow v2.5
@@ -8,13 +8,13 @@
 - gym
 - tensorflow_probability
 
-# Usage
+## Usage
 
 ```
 python SAC.py
 ```
 
-# Config
+## Config
 You can change config.py to fit your own flag.
 
 ```
