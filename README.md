@@ -34,8 +34,7 @@ epsilon     # TODO
 
 hdims       # dimension of hidden layers
 
-# ray
-n_cpu = n_workers # TODO  cpu num
+# ray # TODO
 
 # Update
 batch_size
