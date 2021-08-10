@@ -1,7 +1,7 @@
 import argparse
 
 def args_parse():
-    parser = argparse.ArgumentParser(description="Atari: DQN")
+    parser = argparse.ArgumentParser(description="SAC")
     parser.add_argument('--ray', type=int, help='Train agent with given environment with ray')
     parser.add_argument('--play', help='Play agent with given environment')
     parser.add_argument('--alpha_pi', default=0.1, help='Entropy regularization coefficient')
