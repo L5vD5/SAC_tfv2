@@ -26,7 +26,7 @@ usage: main.py [-h] [--ray RAY] [--play PLAY] [--alpha_pi ALPHA_PI]
                [--buffer_size_long BUFFER_SIZE_LONG]
                [--buffer_size_short BUFFER_SIZE_SHORT]
 
-Atari: DQN
+SAC
 
 optional arguments:
   -h, --help            show this help message and exit
