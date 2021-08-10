@@ -5,7 +5,6 @@ from copy import deepcopy
 from Replaybuffer import SACBuffer
 from model import *
 import random
-from config import *
 from collections import deque
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -14,43 +13,43 @@ print ("Packaged loaded. TF version is [%s]."%(tf.__version__))
 RENDER_ON_EVAL = True
 
 class Agent(object):
-    def __init__(self, seed=1):
+    def __init__(self, args, seed=1):
         self.seed = seed
         # Environment
         self.env, self.eval_env = get_envs()
+
+        self.total_steps = args.total_steps
+        self.start_steps = args.start_steps
+        self.evaluate_every = args.evaluate_every
+        self.batch_size = args.batch_size
+        self.update_count = args.update_count
+        self.num_eval = args.num_eval
+        self.max_ep_len_eval = args.max_ep_len_eval
+        self.buffer_size_long = args.buffer_size_long
+        self.buffer_size_short = args.buffer_size_short
+        self.polyak = args.polyak
+
         odim, adim = self.env.observation_space.shape[0],self.env.action_space.shape[0]
         self.odim = odim
         self.adim = adim
 
         # Actor-critic model
-        self.model = MLPActorCritic(self.odim, self.adim, hdims)
-        self.target = MLPActorCritic(self.odim, self.adim, hdims)
+        self.model = MLPActorCritic(self.odim, self.adim, args)
+        self.target = MLPActorCritic(self.odim, self.adim, args)
 
         self.target.set_weights(self.model.get_weights())
-
-        # self.model.compile()
-        # self.target.compile()
 
         # model load
         # self.model.load_state_dict(tf.load('model_data/model_weights_[64,64]'))
         # print("weight load")
-
-        # self.target = deepcopy(self.model)
 
         # Initialize model
         tf.random.set_seed(self.seed)
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-        # parameter chain [q1 + q2]
-        # self.q_vars = itertools.chain(self.model.q1.trainable_variables, self.model.q2.trainable_variables)
-
-        self.replay_buffer_long = SACBuffer(odim=odim, adim=adim, size=int(buffer_size_long))
-        self.replay_buffer_short = SACBuffer(odim=odim, adim=adim, size=int(buffer_size_short))
-
-        # Optimizers
-        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
-        self.train_q = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
+        self.replay_buffer_long = SACBuffer(odim=odim, adim=adim, size=int(args.buffer_size_long))
+        self.replay_buffer_short = SACBuffer(odim=odim, adim=adim, size=int(args.buffer_size_short))
 
         self.pi_loss_metric = tf.keras.metrics.Mean(name="pi_loss")
         self.value_loss_metric = tf.keras.metrics.Mean(name="Q_loss")
@@ -73,38 +72,36 @@ class Agent(object):
 
     @tf.function
     def update_sac(self, replay_buffer):
-        logp_pi, min_q_pi, logp_pi_next, q_backup, q1_targ, q2_targ= tf.zeros(shape=(128,)), tf.zeros(shape=(128,)), tf.zeros(shape=(128,)),tf.zeros(shape=(128,)), tf.zeros(shape=(128,)), tf.zeros(shape=(128,))
-        for _ in tf.range(update_count):
-            # with tf.GradientTape() as tape:
-            #     pi_loss = self.model.calc_pi_loss(data=replay_buffer)
-            # pi_loss = lambda: self.model.calc_pi_loss(data=replay_buffer)
-            # grad = tape.gradient([pi_loss], self.model.policy.trainable_variables)
-            # train_pi_op = self.train_pi.apply_gradients(zip(grad, self.model.policy.trainable_variables))
-            # self.train_pi.minimize(pi_loss, var_list=self.model.policy.trainable_variables)
+        # with tf.GradientTape() as tape:
+        #     pi_loss = self.model.calc_pi_loss(data=replay_buffer)
+        # pi_loss = lambda: self.model.calc_pi_loss(data=replay_buffer)
+        # grad = tape.gradient([pi_loss], self.model.policy.trainable_variables)
+        # train_pi_op = self.train_pi.apply_gradients(zip(grad, self.model.policy.trainable_variables))
+        # self.train_pi.minimize(pi_loss, var_list=self.model.policy.trainable_variables)
 
-            # var_loss = lambda: self.model.calc_q_loss(target=self.target, data=replay_buffer)
-            # with tf.GradientTape() as tape:
-            #     var_loss = self.model.calc_q_loss(target=self.target, data=replay_buffer)
-            # grad = tape.gradient([var_loss], self.model.q1.trainable_variables + self.model.q2.trainable_variables)
-            # train_q_op = self.train_q.apply_gradients(zip(grad, self.model.q1.trainable_variables + self.model.q2.trainable_variables))
-            # self.train_q.minimize(var_loss, var_list=self.model.q1.trainable_variables + self.model.q2.trainable_variables)
-            pi_loss, logp_pi, min_q_pi = self.model.update_policy(replay_buffer)
-            value_loss, q1, q2, logp_pi_next, q_backup, q1_targ, q2_targ = self.model.update_Q(self.target, replay_buffer)
-            # pi_loss, value_loss, q1, q2 = self.model.update_draft(self.target, replay_buffer)
+        # var_loss = lambda: self.model.calc_q_loss(target=self.target, data=replay_buffer)
+        # with tf.GradientTape() as tape:
+        #     var_loss = self.model.calc_q_loss(target=self.target, data=replay_buffer)
+        # grad = tape.gradient([var_loss], self.model.q1.trainable_variables + self.model.q2.trainable_variables)
+        # train_q_op = self.train_q.apply_gradients(zip(grad, self.model.q1.trainable_variables + self.model.q2.trainable_variables))
+        # self.train_q.minimize(var_loss, var_list=self.model.q1.trainable_variables + self.model.q2.trainable_variables)
+        pi_loss, logp_pi, min_q_pi = self.model.update_policy(replay_buffer)
+        value_loss, q1, q2, logp_pi_next, q_backup, q1_targ, q2_targ = self.model.update_Q(self.target, replay_buffer)
+        # pi_loss, value_loss, q1, q2 = self.model.update_draft(self.target, replay_buffer)
 
-            self.pi_loss_metric.update_state(pi_loss)
-            self.value_loss_metric.update_state(value_loss)
-            self.q1_metric.update_state(q1)
-            self.q2_metric.update_state(q2)
-            # Finally, update target networks by polyak averaging.
-            for v_main, v_targ in zip(self.model.q1.trainable_variables, self.target.q1.trainable_variables):
-                v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
+        self.pi_loss_metric.update_state(pi_loss)
+        self.value_loss_metric.update_state(value_loss)
+        self.q1_metric.update_state(q1)
+        self.q2_metric.update_state(q2)
+        # Finally, update target networks by polyak averaging.
+        for v_main, v_targ in zip(self.model.q1.trainable_variables, self.target.q1.trainable_variables):
+            v_targ.assign(v_main * (1-self.polyak) + v_targ * self.polyak)
 
-            for v_main, v_targ in zip(self.model.q2.trainable_variables, self.target.q2.trainable_variables):
-                v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
+        for v_main, v_targ in zip(self.model.q2.trainable_variables, self.target.q2.trainable_variables):
+            v_targ.assign(v_main * (1-self.polyak) + v_targ * self.polyak)
 
-            # for v_main, v_targ in zip(self.model.policy.trainable_variables, self.target.policy.trainable_variables):
-            #     v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
+        # for v_main, v_targ in zip(self.model.policy.trainable_variables, self.target.policy.trainable_variables):
+        #     v_targ.assign(v_main * (1-polyak) + v_targ * polyak)
 
         return logp_pi, min_q_pi, logp_pi_next, q_backup, q1_targ, q2_targ
 
@@ -119,8 +116,8 @@ class Agent(object):
         [v_targ.assign(v_main) for v_main, v_targ in zip(self.model.trainable_variables, self.target.trainable_variables)]
 
         o, r, d, ep_ret, ep_len, n_env_step = self.env.reset(), 0, False, 0, 0, 0
-        for epoch in range(int(total_steps)):
-            if epoch > start_steps:
+        for epoch in range(int(self.total_steps)):
+            if epoch > self.start_steps:
                 a = self.get_action(o, deterministic=False)
                 a = a.numpy()[0]
             else:
@@ -141,35 +138,35 @@ class Agent(object):
                 o, ep_ret, ep_len = self.env.reset(), 0, 0
 
             # Perform SAC update!
-            if epoch >= start_steps:
-                for _ in range(int(update_count)):
-                    batch = self.replay_buffer_long.sample_batch(batch_size//2)
-                    batch_short = self.replay_buffer_short.sample_batch(batch_size//2)
+            if epoch >= self.start_steps:
+                for _ in tf.range(self.update_count):
+                    batch = self.replay_buffer_long.sample_batch(self.batch_size//2)
+                    batch_short = self.replay_buffer_short.sample_batch(self.batch_size//2)
 
                     batch = {k: tf.constant(v) for k, v in batch.items()}
                     batch_short = {k: tf.constant(v) for k, v in batch_short.items()}
 
                     replay_buffer = dict(obs1=tf.concat([batch['obs1'], batch_short['obs1']], 0),
-                                         obs2=tf.concat([batch['obs2'], batch_short['obs2']], 0),
-                                         acts=tf.concat([batch['acts'], batch_short['acts']], 0),
-                                         rews=tf.concat([batch['rews'], batch_short['rews']], 0),
-                                         done=tf.concat([batch['done'], batch_short['done']], 0))
+                                            obs2=tf.concat([batch['obs2'], batch_short['obs2']], 0),
+                                            acts=tf.concat([batch['acts'], batch_short['acts']], 0),
+                                            rews=tf.concat([batch['rews'], batch_short['rews']], 0),
+                                            done=tf.concat([batch['done'], batch_short['done']], 0))
                     logp_pi, min_q_pi, logp_pi_next, q_backup, q1_targ, q2_targ = self.update_sac(replay_buffer)
 
             # Evaluate
-            if (((epoch + 1) % evaluate_every) == 0):
+            if (((epoch + 1) % self.evaluate_every) == 0):
                 ram_percent = psutil.virtual_memory().percent  # memory usage
                 print("[Evaluate] step:[%d/%d][%.1f%%] #step:[%.1e] time:[%s] ram:[%.1f%%]." %
-                      (epoch + 1, total_steps, epoch / total_steps * 100,
+                      (epoch + 1, self.total_steps, epoch / self.total_steps * 100,
                        n_env_step,
                        time.strftime("%H:%M:%S", time.gmtime(time.time() - start_time)),
                        ram_percent)
                       )
-                for eval_idx in range(num_eval):
+                for eval_idx in range(self.num_eval):
                     o, d, ep_ret, ep_len = self.eval_env.reset(), False, 0, 0
                     if RENDER_ON_EVAL:
                         _ = self.eval_env.render(mode='human')
-                    while not (d or (ep_len == max_ep_len_eval)):
+                    while not (d or (ep_len == self.max_ep_len_eval)):
                         a = self.get_action(o, deterministic=True)
                         o, r, d, _ = self.eval_env.step(a.numpy()[0])
                         if RENDER_ON_EVAL:
@@ -177,7 +174,7 @@ class Agent(object):
                         ep_ret += r  # compute return
                         ep_len += 1
                     print("[Evaluate] [%d/%d] ep_ret:[%.4f] ep_len:[%d]"
-                          % (eval_idx, num_eval, ep_ret, ep_len))
+                          % (eval_idx, self.num_eval, ep_ret, ep_len))
                 latests_100_score.append(ep_ret)
                 self.write_summary(epoch, latests_100_score, ep_ret, n_env_step)
                 print("Saving weights...")
@@ -209,7 +206,7 @@ class Agent(object):
             o, d, ep_ret, ep_len = self.eval_env.reset(), False, 0, 0
             if RENDER_ON_EVAL:
                 _ = self.eval_env.render(mode='human')
-            while not (d or (ep_len == max_ep_len_eval)):
+            while not (d or (ep_len == self.max_ep_len_eval)):
                 a = self.get_action(o, deterministic=True)
                 o, r, d, _ = self.eval_env.step(a.numpy()[0])
                 if RENDER_ON_EVAL:
@@ -217,7 +214,7 @@ class Agent(object):
                 ep_ret += r  # compute return
                 ep_len += 1
             print("[Evaluate] [%d/%d] ep_ret:[%.4f] ep_len:[%d]"
-                  % (i, num_eval, ep_ret, ep_len))
+                  % (i, self.num_eval, ep_ret, ep_len))
 
 def get_envs():
     env_name = 'AntBulletEnv-v0'
@@ -230,7 +227,3 @@ def get_envs():
         o,r,d,_ = eval_env.step(a)
         time.sleep(0.01)
     return env,eval_env
-
-a = Agent()
-a.train()
-# a.play('./log/success/last/')

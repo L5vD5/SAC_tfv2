@@ -2,10 +2,9 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 from gym.spaces import Box, Discrete
-from config import *
 
 ##### Model construction #####
-def mlp(odim=24, hdims=hdims, actv='relu', output_actv='relu'):
+def mlp(odim=24, hdims=[256, 256], actv='relu', output_actv='relu'):
     ki = tf.keras.initializers.truncated_normal(stddev=0.1)
     layers = tf.keras.Sequential()
     layers.add(tf.keras.layers.InputLayer(input_shape=(odim,)))
@@ -23,9 +22,9 @@ def gaussian_loglik(x,mu,log_std):
         return tf.reduce_sum(pre_sum, axis=1)
 
 class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
-    def __init__(self, odim, adim, hdims=hdims, actv='relu'):
+    def __init__(self, odim, adim, args, actv='relu'):
         super(MLPGaussianPolicy, self).__init__()
-        self.net = mlp(odim, hdims, actv, output_actv=actv) #feature
+        self.net = mlp(odim, args.hdims, actv, output_actv=actv) #feature
         # mu layer
         self.mu = tf.keras.layers.Dense(adim, activation=None)
         # std layer
@@ -62,9 +61,9 @@ class MLPGaussianPolicy(tf.keras.Model):    # def mlp_gaussian_policy
 
 # Q-function mlp
 class MLPQFunction(tf.keras.Model):
-    def __init__(self, odim, adim, hdims=hdims, actv='relu'):
+    def __init__(self, odim, adim, args, actv='relu'):
         super().__init__()
-        self.q = mlp(odim+adim, hdims=hdims+[1], actv=actv, output_actv=None)
+        self.q = mlp(odim+adim, hdims=args.hdims+[1], actv=actv, output_actv=None)
 
     @tf.function
     def call(self, o, a):
@@ -73,15 +72,18 @@ class MLPQFunction(tf.keras.Model):
         return tf.squeeze(q, axis=1)   #Critical to ensure q has right shape.
 
 class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
-    def __init__(self, odim, adim, hdims=hdims, actv='relu'):
+    def __init__(self, odim, adim, args, actv='relu'):
         super(MLPActorCritic,self).__init__()
-        self.policy = MLPGaussianPolicy(odim=odim, adim=adim, hdims=hdims, actv=actv)
-        self.q1 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)
-        self.q2 = MLPQFunction(odim=odim, adim=adim, hdims=hdims, actv=actv)
+        self.alpha_pi = args.alpha_pi
+        self.alpha_q = args.alpha_q
+        self.gamma = args.gamma
+        self.policy = MLPGaussianPolicy(odim=odim, adim=adim, args=args, actv=actv)
+        self.q1 = MLPQFunction(odim=odim, adim=adim, args=args, actv=actv)
+        self.q2 = MLPQFunction(odim=odim, adim=adim, args=args, actv=actv)
         # Optimizers
-        self.train_pi = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
-        self.train_q1 = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
-        self.train_q2 = tf.keras.optimizers.Adam(learning_rate=lr, epsilon=epsilon)
+        self.train_pi = tf.keras.optimizers.Adam(learning_rate=args.lr)
+        self.train_q1 = tf.keras.optimizers.Adam(learning_rate=args.lr)
+        self.train_q2 = tf.keras.optimizers.Adam(learning_rate=args.lr)
 
     @tf.function
     def call(self, o, deterministic=False):
@@ -101,7 +103,7 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
             q1_pi = self.q1(o, pi)
             q2_pi = self.q2(o, pi)
             min_q_pi = tf.minimum(q1_pi, q2_pi)
-            pi_loss = tf.reduce_mean(alpha_pi*logp_pi - min_q_pi)
+            pi_loss = tf.reduce_mean(self.alpha_pi*logp_pi - min_q_pi)
         variables = self.policy.trainable_variables
         # grads = tape.gradient(pi_loss, variables)
         # self.train_pi.apply_gradients(zip(grads, variables))
@@ -119,7 +121,7 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
         q2_targ = target.q2(o2, pi_next)
         min_q_targ = tf.minimum(q1_targ, q2_targ)
         # Entropy-regularized Bellman backup
-        q_backup = tf.stop_gradient(r + gamma * (1 - d) * (min_q_targ - alpha_q * logp_pi_next))
+        q_backup = tf.stop_gradient(r + self.gamma * (1 - d) * (min_q_targ - self.alpha_q * logp_pi_next))
 
         with tf.GradientTape() as tape:
             q1 = self.q1(o, a)
@@ -151,7 +153,7 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
         q2_targ = target.q2(o2, pi_next)
         min_q_targ = tf.minimum(q1_targ, q2_targ)
         # Entropy-regularized Bellman backup
-        q_backup = tf.stop_gradient(r + gamma * (1 - d) * (min_q_targ - alpha_q * logp_pi_next))
+        q_backup = tf.stop_gradient(r + self.gamma * (1 - d) * (min_q_targ - self.alpha_q * logp_pi_next))
 
         with tf.GradientTape(persistent=True) as tape:
             _, pi, logp_pi = self.policy(o)
@@ -161,7 +163,7 @@ class MLPActorCritic(tf.keras.Model):   # def mlp_actor_critic
             q1_pi = tf.stop_gradient(self.q1(o, pi))
             q2_pi = tf.stop_gradient(self.q2(o, pi))
             min_q_pi = tf.minimum(q1_pi, q2_pi)
-            pi_loss = tf.reduce_mean(alpha_pi*logp_pi - min_q_pi)
+            pi_loss = tf.reduce_mean(self.alpha_pi*logp_pi - min_q_pi)
             q1_loss = 0.5*tf.losses.mse(q1,q_backup)
             q2_loss = 0.5*tf.losses.mse(q2,q_backup)
             value_loss = q1_loss + q2_loss

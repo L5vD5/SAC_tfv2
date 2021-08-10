@@ -1,5 +1,3 @@
-LOG_STD_MIN = -10.0
-LOG_STD_MAX = +2.0
 
 alpha_pi = 0.1
 alpha_q = 0.1 #0.1
