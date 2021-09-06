@@ -15,7 +15,7 @@ $ python main.py --hdims 128 128                             # train without ray
 $ python main.py --ray [number_of_workers] --hdims 128 128   # train with ray
 $ python main.py --play [weight_file_path] --hdims 128 128   # play with weight file
 
-$ python SAC.py --help
+$ python main.py --help
 
 usage: main.py [-h] [--ray RAY] [--play PLAY] [--alpha_pi ALPHA_PI]
                [--alpha_q ALPHA_Q] [--lr LR] [--gamma GAMMA] [--polyak POLYAK]
