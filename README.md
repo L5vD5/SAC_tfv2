@@ -11,9 +11,9 @@
 ## Usage
 
 ```
-$ python SAC.py --hdims 128 128                             # train without ray
-$ python SAC.py --ray [number_of_workers] --hdims 128 128   # train with ray
-$ python SAC.py --play [weight_file_path] --hdims 128 128   # play with weight file
+$ python main.py --hdims 128 128                             # train without ray
+$ python main.py --ray [number_of_workers] --hdims 128 128   # train with ray
+$ python main.py --play [weight_file_path] --hdims 128 128   # play with weight file
 
 $ python SAC.py --help
 
